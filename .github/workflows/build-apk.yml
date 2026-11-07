@@ -1,0 +1,79 @@
+name: Build HisabPro Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    name: Build Android APK (Capacitor + Gradle)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Normalize Project Structure (Handle Subfolder or Nested Zip Upload)
+        run: |
+          if [ ! -f "package.json" ] && [ -f "taka_flow_finance_app/package.json" ]; then
+            echo "Detected project inside taka_flow_finance_app/ folder. Moving to root..."
+            shopt -s dotglob
+            mv taka_flow_finance_app/* .
+            rmdir taka_flow_finance_app || true
+          elif [ ! -f "package.json" ]; then
+            ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+            if [ -n "$ZIP_FILE" ]; then
+              echo "Detected uploaded ZIP archive ($ZIP_FILE). Extracting..."
+              unzip -o "$ZIP_FILE"
+              if [ -f "taka_flow_finance_app/package.json" ]; then
+                shopt -s dotglob
+                mv taka_flow_finance_app/* .
+                rmdir taka_flow_finance_app || true
+              fi
+            fi
+          fi
+          ls -la
+
+      - name: 3. Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 4. Setup Java JDK 21 (Required for Capacitor 6 & Android Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: 5. Install Dependencies & Build Web Bundle
+        run: |
+          npm install --legacy-peer-deps
+          npm run build
+
+      - name: 6. Initialize & Sync Capacitor Android Platform
+        run: |
+          rm -f capacitor.config.ts
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: 7. Build Installable Android APK with Gradle
+        working-directory: ./android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: 8. Rename APK for Easy Download
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk ./HisabPro-TakaFlow-v2.1.apk
+          ls -lh ./HisabPro-TakaFlow-v2.1.apk
+
+      - name: 9. Upload Installable APK as GitHub Actions Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HisabPro-Android-APK
+          path: ./HisabPro-TakaFlow-v2.1.apk
+          if-no-files-found: error
+          retention-days: 30
